@@ -1,0 +1,330 @@
+---
+title: "5. Species with vs Metabolites and Disease Progression"
+author: "Avril Metcalfe-Roach"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Load data}
+library(phyloseq)
+library(tidyverse)
+library(ggpubr)
+library(microbiome)
+library(ggcorrplot)
+library(lme4)
+library(lmerTest)
+library(scales)
+
+source('Supp Scripts/5.1. Load Datasets.R')
+source('Supp Scripts/18. LMER Functions.R')
+source('Supp Scripts/5.4. Cross-Sectional Functions.R')
+```
+
+```{r Metabolite (amino acid) data}
+# Other data
+aa = read.csv('C:/Users/armetcal/OneDrive - UBC/Grad School/Data/HUMAN COHORT/Reference Files/Metadata/aa_metabolites.csv') %>% 
+  rename(ID = Record.ID) %>% mutate(ID = as.character(ID))
+id = read.csv('C:/Users/armetcal/OneDrive - UBC/Grad School/Data/HUMAN COHORT/Reference Files/ID_key.csv')
+
+met = aa %>% rename(record_id = ID) %>% 
+  left_join(id)
+met$record_id[!is.na(met$correct_id)] = met$correct_id[!is.na(met$correct_id)]
+met = met %>% rename(Sample = record_id) %>% select(-correct_id)
+met$Sample = paste('X_',met$Sample,sep='')
+rm(aa,id)
+
+# Join taxonomy data
+met = met %>% left_join(temp) %>% 
+  # Remove anyone without taxonomy data
+  filter(!is.na(s__Ruthenibacterium_lactatiformans))
+```
+# FIRM STOOL
+
+```{r Longitudinal Data}
+b = temp %>% select(Sample, bristol) %>% mutate(bristol_grp = ifelse(is.na(bristol),NA,ifelse(bristol<3,'Firm',ifelse(bristol<5,'Normal','Loose')))) %>% select(Sample, bristol_grp) %>% filter(!is.na(bristol_grp)) %>% 
+  filter(bristol_grp=='Firm')
+
+# Load dataset, choose relevant metadata
+long0 = read.csv('C:/Users/armetcal/OneDrive - UBC/Grad School/Data/HUMAN COHORT/Reference Files/Metadata/shayanandkiradata_nov22.csv') %>% 
+  select(Record.ID,redcap_event_name,Disease.duration,bdi_total,contains('mds'),td.pigd,fss_total,months_last_visit) %>% 
+  rename(Sample = Record.ID) %>% 
+  # Add an X to sample names to match the other datasets
+  mutate(Sample = paste0('X_',Sample)) %>% 
+  # Filter samples according to bristol group~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  filter(Sample %in% b$Sample) %>% 
+  arrange(months_last_visit) %>% 
+  group_by(Sample) %>% 
+  # Set the baseline as 0 months
+  mutate(months_last_visit = ifelse(redcap_event_name=='visit_1_arm_1',0,months_last_visit)) %>%
+  # Select only those with longitudinal data available
+  add_count() %>% filter(n>1) %>% select(-n) %>%
+  ungroup
+
+# Select microbiome-relevant metadata, join to longitudinal dataset
+micro = psm %>% select(Sample,Status,Sex,bristol,ent_boolean,depth,OTU,Abundance,Kingdom:Species) %>% unique
+long = long0 %>% left_join(micro)
+```
+
+```{r set up}
+# Center static predictors, normalize as necessary. This reduces spurious correlations as directed in documentation.
+# Center each OTU separately
+pd = long %>% filter(Status == 'PD') %>% group_by(OTU) %>% 
+  mutate(Abundance = rescale(Abundance)) %>% 
+  # Rescale to range of 0-1
+  mutate(Abundance = Abundance-mean(Abundance,na.rm=T)) %>% ungroup()
+pd$months_last_visit = log10(pd$months_last_visit + 1) # Log10 transform before centering
+pd$months_last_visit = pd$months_last_visit - mean(pd$months_last_visit,na.rm=T)
+pd$depth = (pd$depth - mean(pd$depth,na.rm=T))/1e6 # Divide to reduce magnitude as directed in documentation
+pd$Sex = factor(pd$Sex)
+pd$ent_boolean = factor(pd$ent_boolean)
+```
+
+```{r Run LMER}
+vars = c('mds.total','mds1.total','mds2.total','mds3.total','mds4.total','fss_total','bdi_total')
+
+# Univariate
+allres = data.frame()
+for(v in vars) { run_lmer(pd,'s__Faecalibacterium_prausnitzii',v) }
+
+# Multivariate - Interaction (no DD)
+allresmulti = data.frame()
+for(v in vars) { run_lmer_multi(pd,'s__Faecalibacterium_prausnitzii',v) }
+allresmulti.int = allresmulti
+
+# Multivariate - Abundance (incl DD)
+allresmulti = data.frame()
+for(v in vars) { run_lmer_multi2(pd,'s__Faecalibacterium_prausnitzii',v) }
+allresmulti.ab = allresmulti
+
+# Process results
+allres.p = allres %>% filter(Variable == 'Abundance:months_last_visit') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Interaction\n(Univar)')
+
+allres.ab.p = allres %>% filter(Variable == 'Abundance') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Abundance\n(Univar)')
+
+allresmulti.int.p = allresmulti.int %>% filter(Variable == 'Abundance:months_last_visit') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Interaction\n(Multi)')
+
+allresmulti.ab.p = allresmulti.ab %>% filter(Variable == 'Abundance') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Abundance\n(Multi)')
+
+allres.firm = rbind(allres.p,allres.ab.p,allresmulti.int.p,allresmulti.ab.p)
+```
+
+```{r Plot LMER}
+input.firm = allres.firm %>% mutate(Estimate = ifelse(Variable == 'Abundance:months_last_visit' & Test %in% c('fss_total','bdi_total'),NA,Estimate))
+
+input.firm$Group = factor(input.firm$Group, levels = c('Abundance\n(Univar)','Abundance\n(Multi)',
+                                             'Interaction\n(Univar)','Interaction\n(Multi)'))
+
+p = plot_lmer_faecali(input.firm,c('mds.total','mds1.total','mds2.total','mds3.total','mds4.total','bdi_total','fss_total'))
+p
+ggsave(plot = p,'../Final Outputs/Clinical Data/long_vs_sig_taxa_heatmap_ab.multi_bristol_firm_faecali.png',height=4,width=8)
+```
+
+# LOOSE STOOL
+
+```{r Longitudinal Data}
+b = temp %>% select(Sample, bristol) %>% mutate(bristol_grp = ifelse(is.na(bristol),NA,ifelse(bristol<3,'Firm',ifelse(bristol<5,'Normal','Loose')))) %>% select(Sample, bristol_grp) %>% filter(!is.na(bristol_grp)) %>% 
+  filter(bristol_grp=='Loose')
+
+# Load dataset, choose relevant metadata
+long0 = read.csv('C:/Users/armetcal/OneDrive - UBC/Grad School/Data/HUMAN COHORT/Reference Files/Metadata/shayanandkiradata_nov22.csv') %>% 
+  select(Record.ID,redcap_event_name,Disease.duration,bdi_total,contains('mds'),td.pigd,fss_total,months_last_visit) %>% 
+  rename(Sample = Record.ID) %>% 
+  # Add an X to sample names to match the other datasets
+  mutate(Sample = paste0('X_',Sample)) %>% 
+  # Filter samples according to bristol group
+  filter(Sample %in% b$Sample) %>% 
+  arrange(months_last_visit) %>% 
+  group_by(Sample) %>% 
+  # Set the baseline as 0 months
+  mutate(months_last_visit = ifelse(redcap_event_name=='visit_1_arm_1',0,months_last_visit)) %>%
+  # Select only those with longitudinal data available
+  add_count() %>% filter(n>1) %>% select(-n) %>%
+  ungroup
+
+# Select microbiome-relevant metadata, join to longitudinal dataset
+micro = psm %>% select(Sample,Status,Sex,bristol,ent_boolean,depth,OTU,Abundance,Kingdom:Species) %>% unique
+long = long0 %>% left_join(micro)
+```
+
+```{r set up}
+# Center static predictors, normalize as necessary. This reduces spurious correlations as directed in documentation.
+# Center each OTU separately
+pd = long %>% filter(Status == 'PD') %>% group_by(OTU) %>% 
+  mutate(Abundance = rescale(Abundance)) %>% 
+  # Rescale to range of 0-1
+  mutate(Abundance = Abundance-mean(Abundance,na.rm=T)) %>% ungroup()
+pd$months_last_visit = log10(pd$months_last_visit + 1) # Log10 transform before centering
+pd$months_last_visit = pd$months_last_visit - mean(pd$months_last_visit,na.rm=T)
+pd$depth = (pd$depth - mean(pd$depth,na.rm=T))/1e6 # Divide to reduce magnitude as directed in documentation
+pd$Sex = factor(pd$Sex)
+pd$ent_boolean = factor(pd$ent_boolean)
+```
+
+```{r Run LMER}
+vars = c('mds.total','mds1.total','mds2.total','mds3.total','mds4.total','fss_total','bdi_total')
+
+# Univariate
+allres = data.frame()
+for(v in vars) { run_lmer(pd,'s__Faecalibacterium_prausnitzii',v) }
+
+# Multivariate - Interaction (no DD)
+allresmulti = data.frame()
+for(v in vars) { run_lmer_multi(pd,'s__Faecalibacterium_prausnitzii',v) }
+allresmulti.int = allresmulti
+
+# Multivariate - Abundance (incl DD)
+allresmulti = data.frame()
+for(v in vars) { run_lmer_multi2(pd,'s__Faecalibacterium_prausnitzii',v) }
+allresmulti.ab = allresmulti
+
+# Process results
+allres.p = allres %>% filter(Variable == 'Abundance:months_last_visit') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Interaction\n(Univar)')
+
+allres.ab.p = allres %>% filter(Variable == 'Abundance') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Abundance\n(Univar)')
+
+allresmulti.int.p = allresmulti.int %>% filter(Variable == 'Abundance:months_last_visit') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Interaction\n(Multi)')
+
+allresmulti.ab.p = allresmulti.ab %>% filter(Variable == 'Abundance') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Abundance\n(Multi)')
+
+allres.loose = rbind(allres.p,allres.ab.p,allresmulti.int.p,allresmulti.ab.p)
+```
+
+```{r Plot LMER}
+input.loose = allres.loose %>% mutate(Estimate = ifelse(Variable == 'Abundance:months_last_visit' & Test %in% c('fss_total','bdi_total'),NA,Estimate))
+
+input.loose$Group = factor(input.loose$Group, levels = c('Abundance\n(Univar)','Abundance\n(Multi)',
+                                             'Interaction\n(Univar)','Interaction\n(Multi)'))
+
+p = plot_lmer_faecali(input.loose,c('mds.total','mds1.total','mds2.total','mds3.total','mds4.total','bdi_total','fss_total'))
+p
+ggsave(plot = p,'../Final Outputs/Clinical Data/long_vs_sig_taxa_heatmap_ab.multi_bristol_loose_faecali.png',height=4,width=7.5)
+```
+
+# NORMAL STOOL
+
+```{r Longitudinal Data}
+b = temp %>% select(Sample, bristol) %>% mutate(bristol_grp = ifelse(is.na(bristol),NA,ifelse(bristol<3,'Firm',ifelse(bristol<5,'Normal','Loose')))) %>% select(Sample, bristol_grp) %>% filter(!is.na(bristol_grp))
+table(b$bristol_grp)
+b = temp %>% select(Sample, bristol) %>% mutate(bristol_grp = ifelse(is.na(bristol),NA,ifelse(bristol<3,'Firm',ifelse(bristol<5,'Normal','Loose')))) %>% select(Sample, bristol_grp) %>% filter(!is.na(bristol_grp)) %>% 
+  filter(bristol_grp=='Normal')
+
+# Load dataset, choose relevant metadata
+long0 = read.csv('C:/Users/armetcal/OneDrive - UBC/Grad School/Data/HUMAN COHORT/Reference Files/Metadata/shayanandkiradata_nov22.csv') %>% 
+  select(Record.ID,redcap_event_name,Disease.duration,bdi_total,contains('mds'),td.pigd,fss_total,months_last_visit) %>% 
+  rename(Sample = Record.ID) %>% 
+  # Add an X to sample names to match the other datasets
+  mutate(Sample = paste0('X_',Sample)) %>% 
+  # Filter samples according to bristol group
+  filter(Sample %in% b$Sample) %>% 
+  arrange(months_last_visit) %>% 
+  group_by(Sample) %>% 
+  # Set the baseline as 0 months
+  mutate(months_last_visit = ifelse(redcap_event_name=='visit_1_arm_1',0,months_last_visit)) %>%
+  # Select only those with longitudinal data available
+  add_count() %>% filter(n>1) %>% select(-n) %>%
+  ungroup
+
+# Select microbiome-relevant metadata, join to longitudinal dataset
+micro = psm %>% select(Sample,Status,Sex,bristol,ent_boolean,depth,OTU,Abundance,Kingdom:Species) %>% unique
+long = long0 %>% left_join(micro)
+```
+
+```{r set up}
+# Center static predictors, normalize as necessary. This reduces spurious correlations as directed in documentation.
+# Center each OTU separately
+pd = long %>% filter(Status == 'PD') %>% group_by(OTU) %>% 
+  mutate(Abundance = rescale(Abundance)) %>% 
+  # Rescale to range of 0-1
+  mutate(Abundance = Abundance-mean(Abundance,na.rm=T)) %>% ungroup()
+pd$months_last_visit = log10(pd$months_last_visit + 1) # Log10 transform before centering
+pd$months_last_visit = pd$months_last_visit - mean(pd$months_last_visit,na.rm=T)
+pd$depth = (pd$depth - mean(pd$depth,na.rm=T))/1e6 # Divide to reduce magnitude as directed in documentation
+pd$Sex = factor(pd$Sex)
+pd$ent_boolean = factor(pd$ent_boolean)
+```
+
+```{r Run LMER}
+vars = c('mds.total','mds1.total','mds2.total','mds3.total','mds4.total','fss_total','bdi_total')
+
+# Univariate
+allres = data.frame()
+for(v in vars) { run_lmer(pd,'s__Faecalibacterium_prausnitzii',v) }
+
+# Multivariate - Interaction (no DD)
+allresmulti = data.frame()
+for(v in vars) { run_lmer_multi(pd,'s__Faecalibacterium_prausnitzii',v) }
+allresmulti.int = allresmulti
+
+# Multivariate - Abundance (incl DD)
+allresmulti = data.frame()
+for(v in vars) { run_lmer_multi2(pd,'s__Faecalibacterium_prausnitzii',v) }
+allresmulti.ab = allresmulti
+
+# Process results
+allres.p = allres %>% filter(Variable == 'Abundance:months_last_visit') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Interaction\n(Univar)')
+
+allres.ab.p = allres %>% filter(Variable == 'Abundance') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Abundance\n(Univar)')
+
+allresmulti.int.p = allresmulti.int %>% filter(Variable == 'Abundance:months_last_visit') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Interaction\n(Multi)')
+
+allresmulti.ab.p = allresmulti.ab %>% filter(Variable == 'Abundance') %>% arrange(`Pr(>|t|)`) %>% 
+  group_by(Test) %>% mutate(qval = p.adjust(`Pr(>|t|)`,method = 'fdr')) %>% ungroup() %>% 
+  mutate(Group = 'Abundance\n(Multi)')
+
+allres.normal = rbind(allres.p,allres.ab.p,allresmulti.int.p,allresmulti.ab.p)
+```
+
+```{r Plot LMER}
+input.normal = allres.normal %>% mutate(Estimate = ifelse(Variable == 'Abundance:months_last_visit' & Test %in% c('fss_total','bdi_total'),NA,Estimate))
+
+input.normal$Group = factor(input.normal$Group, levels = c('Abundance\n(Univar)','Abundance\n(Multi)',
+                                             'Interaction\n(Univar)','Interaction\n(Multi)'))
+
+p = plot_lmer_faecali(input.normal,c('mds.total','mds1.total','mds2.total','mds3.total','mds4.total','bdi_total','fss_total'))
+p
+ggsave(plot = p,'../Final Outputs/Clinical Data/long_vs_sig_taxa_heatmap_ab.multi_bristol_normal_faecali.png',height=4,width=7.5)
+```
+
+#~~~~~~~~~~~~~~~~
+
+```{r Combine plots}
+input.all = rbind(
+  input.firm %>% mutate(`Stool Firmness` = 'Firm'),
+  input.normal %>% mutate(`Stool Firmness` = 'Normal'),
+  input.loose %>% mutate(`Stool Firmness` = 'Loose')
+)
+
+input.all$`Stool Firmness` = factor(input.all$`Stool Firmness`, levels = c('Firm','Normal','Loose'))
+
+p = plot_lmer_faecali_combined(input.all,c('mds.total','mds1.total','mds2.total','mds3.total','mds4.total','bdi_total','fss_total'))
+p
+ggsave(plot = p + ylab('Stool Firmness'),'../Final Outputs/Clinical Data/long_vs_sig_taxa_heatmap_faecali.png',height=8,width=8)
+```
+
+
+```{r Save Stats}
+writexl::write_xlsx(list(Statistics = input.all),
+                    '../Final Outputs/Clinical Data/lmer_statistics_species_bristol_all.xlsx')
+```

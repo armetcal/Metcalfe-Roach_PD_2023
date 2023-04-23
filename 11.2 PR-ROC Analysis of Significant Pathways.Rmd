@@ -1,0 +1,214 @@
+---
+title: "15. ROC Analysis of Disease-Modified Pathways"
+author: "Avril Metcalfe-Roach"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r load data}
+library(phyloseq)
+library(tidyverse)
+library(ggpubr)
+```
+
+# DISEASE STATUS
+
+```{r}
+source('Supp Scripts/16.1. PR-ROC Load Datasets - Status.R')
+source('Supp Scripts/16.2. PR-ROC Functions.R')
+
+# Bookend sig pathways with ` so that it's read properly
+sig = paste0('`',sig,'`')
+```
+
+## PR-ROC
+
+```{r Build stepwise ROC model - Univar, include=FALSE}
+list_indiv_univar = list()
+for(i in sig){
+  # i=sig[3]
+  r = run_ROC(temp, 'Status', i, name = i)
+  list_indiv_univar = append(list_indiv_univar,list(r))
+}
+
+indiv_univar = lapply(list_indiv_univar, function(x)x$ROC) %>% bind_rows() %>% 
+  filter(Test == 'PR-ROC', Data == 'Test') %>% arrange(-ROC)
+
+list_comb_univar = list()
+for(i in c(1:nrow(indiv_univar))){
+  r = run_ROC(temp, 'Status', indiv_univar$Name[1:i], name = i)
+  list_comb_univar = append(list_comb_univar,list(r))
+}
+
+comb_univar = lapply(list_comb_univar, function(x)x$ROC) %>% bind_rows() %>% 
+  filter(Test == 'PR-ROC', Data == 'Test') %>% arrange(-ROC)
+```
+
+```{r}
+print('Winning model:')
+print(indiv_univar$Name[1:comb_univar$Name[1]])
+print(comb_univar$ROC[1])
+```
+
+```{r Build stepwise ROC model - Multivar, include=FALSE}
+list_indiv_multi = list()
+for(i in c(NA,sig)){
+  if(!is.na(i)){var = c(i,'bristol','Sex','depth')} else { var = c('bristol','Sex','depth')}
+  r = run_ROC(temp %>% filter(!is.na(bristol)), 'Status', var, name = i)
+  list_indiv_multi = append(list_indiv_multi,list(r))
+}
+
+indiv_multi = lapply(list_indiv_multi, function(x)x$ROC) %>% bind_rows() %>% 
+  filter(Test == 'PR-ROC', Data == 'Test') %>% arrange(-ROC)
+
+list_comb_multi = list()
+for(i in c(1:nrow(indiv_multi))){
+  var = indiv_multi$Name[1:i] %>% .[!is.na(.)]
+  r = run_ROC(temp %>% filter(!is.na(bristol)), 'Status', c(var,'bristol','Sex','depth'), name = i)
+  list_comb_multi = append(list_comb_multi,list(r))
+}
+
+comb_multi = lapply(list_comb_multi, function(x)x$ROC) %>% bind_rows() %>% 
+  filter(Test == 'PR-ROC', Data == 'Test') %>% arrange(-ROC)
+```
+
+```{r}
+print('Winning model:')
+print(indiv_multi$Name[1:comb_multi$Name[1]])
+print(comb_multi$ROC[1])
+
+print('Covariable-only model:')
+print(indiv_multi$ROC[is.na(indiv_multi$Name)])
+```
+
+## PLOT WINNING MODELS
+
+```{r}
+# Official output:
+p = prep_plots(data=temp,plotvar='Status',plotheights=c(5,3,5))
+
+p_noroc = ggarrange(plotlist = list(p$box,p$est),ncol = 1,nrow = 2,heights = c(1,1.5))
+
+# Save plot
+ggsave(plot = p$comb, '../Final Outputs/ROC/16. PRROC Model Fit - Status.png',height = 13, width = 10)
+ggsave(plot = p_noroc, '../Final Outputs/ROC/16. PRROC Model Fit - Status - v2.png',height = 7, width = 10)
+
+# Log 2 FC
+p$lfc
+```
+
+
+#~~~~~~~~~~~~~~~~~~~~
+
+# LONGITUDINAL DATA - DISEASE PROGRESSION
+
+```{r}
+source('Supp Scripts/16.1. PR-ROC Load Datasets - Status.R')
+# The below script creates 'long', which contains fast/slow progression. Fast/slow represent the fastest and slowest thirds. 'long_all' includes the middle third for plotting purposes.
+source('Supp Scripts/16.1. PR-ROC Load Datasets - Progression.R')
+source('Supp Scripts/16.2. PR-ROC Functions.R')
+
+# Bookend sig pathways with ` so that it's read properly
+sig = paste0('`',sig,'`')
+
+# w is for weights setting
+w = T
+```
+
+# PR-ROC
+
+```{r Build stepwise ROC model - Univar, include=FALSE}
+list_indiv_univar = list()
+for(i in sig){
+  r = run_ROC(long, 'Progression', i, name = i, testsize = 0.7,weights=w)
+  list_indiv_univar = append(list_indiv_univar,list(r))
+}
+
+indiv_univar = lapply(list_indiv_univar, function(x)x$ROC) %>% bind_rows() %>% 
+  filter(Test == 'PR-ROC', Data == 'Test') %>% arrange(-ROC)
+
+list_comb_univar = list()
+for(i in c(1:nrow(indiv_univar))){
+  r = run_ROC(long, 'Progression', indiv_univar$Name[1:i], name = i, testsize = 0.7,weights=w)
+  list_comb_univar = append(list_comb_univar,list(r))
+}
+
+comb_univar = lapply(list_comb_univar, function(x)x$ROC) %>% bind_rows() %>% 
+  filter(Test == 'PR-ROC', Data == 'Test') %>% arrange(-ROC)
+```
+
+```{r}
+print('Winning model:')
+print(indiv_univar$Name[1:comb_univar$Name[1]])
+print(comb_univar$ROC[1])
+```
+
+```{r Build stepwise ROC model - Multivar, include=FALSE}
+list_indiv_multi = list()
+for(i in c(NA,sig)){
+  if(!is.na(i)){var = c(i,'bristol','Sex','depth')} else { var = c('bristol','Sex','depth')}
+  r = run_ROC(long %>% filter(!is.na(bristol)), 'Progression', var, name = i,weights=w)
+  list_indiv_multi = append(list_indiv_multi,list(r))
+}
+
+indiv_multi = lapply(list_indiv_multi, function(x)x$ROC) %>% bind_rows() %>% 
+  filter(Test == 'PR-ROC', Data == 'Test') %>% arrange(-ROC)
+
+list_comb_multi = list()
+for(i in c(1:nrow(indiv_multi))){
+  var = indiv_multi$Name[1:i] %>% .[!is.na(.)]
+  r = run_ROC(long %>% filter(!is.na(bristol)), 'Progression', c(var,'bristol','Sex','depth'), name = i,weights=w)
+  list_comb_multi = append(list_comb_multi,list(r))
+}
+
+comb_multi = lapply(list_comb_multi, function(x)x$ROC) %>% bind_rows() %>% 
+  filter(Test == 'PR-ROC', Data == 'Test') %>% arrange(-ROC)
+```
+
+```{r}
+print('Winning model:')
+print(indiv_multi$Name[1:comb_multi$Name[1]])
+print(comb_multi$ROC[1])
+
+print('Covariable-only model:')
+print(indiv_multi$ROC[is.na(indiv_multi$Name)])
+```
+
+## PLOT WINNING MODELS
+
+```{r}
+# Official output:
+p2 = prep_plots(data=long_all,plotvar='Progression',plotheights = c(5,3,5),
+                comparisons = list(c('Slow','Med'),c('Slow','Fast')))
+
+p_noroc2 = ggarrange(plotlist = list(p2$box,p2$est),ncol = 1,nrow = 2,heights = c(1,1.5))
+
+# Save plot
+if(w){
+  ggsave(plot = p2$comb, '../Final Outputs/ROC/16. PRROC Model Fit - Progression_weighted.png',height = 13, width = 12)
+} else {
+  ggsave(plot = p2$comb, '../Final Outputs/ROC/16. PRROC Model Fit - Progression_unweighted.png',height = 13, width = 12)
+}
+# Save plot
+if(w){
+  ggsave(plot = p_noroc2, '../Final Outputs/ROC/16. PRROC Model Fit - Progression_weighted_v2.png',height = 8, width = 12)
+} else {
+  ggsave(plot = p_noroc2, '../Final Outputs/ROC/16. PRROC Model Fit - Progression_unweighted_v2.png',height = 8, width = 12)
+}
+
+# Log 2 FC
+p$lfc
+```
+
+# Format and combine similar plots
+
+```{r}
+ggsave(plot=p$box,'../Final Outputs/ROC/Box/PWY - Status.png',height = 3, width = 10)
+ggsave(plot=p2$box,'../Final Outputs/ROC/Box/PWY - Progression.png',height = 3, width = 10)
+
+ggsave(plot=p$roc,'../Final Outputs/ROC/ROC/PWY - Status.png',height = 3, width = 10)
+ggsave(plot=p2$roc,'../Final Outputs/ROC/ROC/PWY - Progression.png',height = 3, width = 10)
+
+ggsave(plot=p$est,'../Final Outputs/ROC/Est/PWY - Status.png',height = 4, width = 10)
+ggsave(plot=p2$est,'../Final Outputs/ROC/Est/PWY - Progression.png',height = 4, width = 10)
+```

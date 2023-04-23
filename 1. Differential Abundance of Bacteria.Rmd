@@ -1,0 +1,83 @@
+---
+title: "1. DA of Microbiome"
+author: "Avril Metcalfe-Roach"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Load Data}
+library(phyloseq)
+library(ANCOMBC)
+library(ALDEx2)
+library(Maaslin2)
+library(tidyverse)
+library(ggpubr)
+source("C:/Users/armetcal/OneDrive - UBC/Grad School/CODES/R Functions/da_supplementary_functions_v4.R")
+
+ps = readRDS("../Reference Files/phyloseq_object_leafyadj_absolute_counts.rds")
+ps@sam_data$Status = as.factor(ps@sam_data$Status)
+ps@sam_data$bristol = as.numeric(ps@sam_data$bristol)
+ps@sam_data$Sex = as.factor(ps@sam_data$Sex)
+ps@sam_data$ent_boolean = ps@sam_data$entacapone>0
+# Sequencing depth
+ps@sam_data$depth = sample_sums(ps)
+```
+
+# ALL LEVEL ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+```{r}
+res.p = run_da(ps,'Status','Phylum',struc_zero = T, group='Status')
+res.p.m = run_da(ps,'Status+Sex+ent_boolean+bristol','Phylum',struc_zero = T, group='Status',incldepth = T, stat = 'p_val')
+
+res.f = run_da(ps,'Status','Family',struc_zero = T, group='Status')
+res.f.m = run_da(ps,'Status+Sex+ent_boolean+bristol','Family',struc_zero = T, group='Status',incldepth = T, stat = 'p_val')
+
+res.g = run_da(ps,'Status','Genus',struc_zero = T, group='Status')
+res.g.m = run_da(ps,'Status+Sex+ent_boolean+bristol','Genus',struc_zero = T, group='Status',incldepth = T, stat = 'p_val')
+
+res.s = run_da(ps,'Status','Species',struc_zero = T, group='Status')
+res.s.m = run_da(ps,'Status+Sex+ent_boolean+bristol','Species',struc_zero = T, group='Status',incldepth = T, stat = 'p_val')
+```
+
+```{r}
+species = list(res = res.s,res2 = res.s.m) %>% lapply(function(x)x$results)
+genus = list(res = res.g,res2 = res.g.m) %>% lapply(function(x)x$results)
+family = list(res = res.f,res2 = res.f.m) %>% lapply(function(x)x$results)
+phylum = list(res = res.p,res2 = res.p.m) %>% lapply(function(x)x$results)
+```
+
+
+# SAVE RESULTS
+
+```{r}
+# Univar
+writexl::write_xlsx(list(Phylum = phylum$res$combined_res,Family=family$res$combined_res,
+                         Genus=genus$res$combined_res,Species=species$res$combined_res),
+                    '../Final Outputs/DA Results/DA_Microbiome_Status_All_Univar_Stats.xlsx')
+writexl::write_xlsx(list(Phylum = phylum$res$significance_summary,Family=family$res$significance_summary,
+                         Genus=genus$res$significance_summary,Species=species$res$significance_summary),
+                    '../Final Outputs/DA Results/DA_Microbiome_Status_All_Univar_Summary.xlsx')
+
+writexl::write_xlsx(list(Phylum = phylum$res$combined_res,Family=family$res$combined_res,
+                         Genus=genus$res$combined_res,Species=species$res$combined_res),
+                    '../Supplementary Tables/3. DA_Microbiome_Status_All_Univar_Stats.xlsx')
+writexl::write_xlsx(list(Phylum = phylum$res$significance_summary,Family=family$res$significance_summary,
+                         Genus=genus$res$significance_summary,Species=species$res$significance_summary),
+                    '../Supplementary Tables/3. DA_Microbiome_Status_All_Univar_Summary.xlsx')
+
+# Multivar
+writexl::write_xlsx(list(Phylum=phylum$res2$combined_res, Family=family$res2$combined_res,
+                         Genus=genus$res2$combined_res,Species=species$res2$combined_res),
+                    '../Final Outputs/DA Results/DA_Microbiome_Status_All_Multivar_Stats.xlsx')
+writexl::write_xlsx(list(Phylum=phylum$res2$significance_summary,Family=family$res2$significance_summary,
+                         Genus=genus$res2$significance_summary,Species=species$res2$significance_summary),
+                    '../Final Outputs/DA Results/DA_Microbiome_Status_All_Multivar_Summary.xlsx')
+
+writexl::write_xlsx(list(Phylum=phylum$res2$combined_res, Family=family$res2$combined_res,
+                         Genus=genus$res2$combined_res,Species=species$res2$combined_res),
+                    '../Supplementary Tables/3. DA_Microbiome_Status_All_Multivar_Stats.xlsx')
+writexl::write_xlsx(list(Phylum=phylum$res2$significance_summary,Family=family$res2$significance_summary,
+                         Genus=genus$res2$significance_summary,Species=species$res2$significance_summary),
+                    '../Supplementary Tables/3. DA_Microbiome_Status_All_Multivar_Summary.xlsx')
+```
+
