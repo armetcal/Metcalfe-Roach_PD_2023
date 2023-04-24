@@ -69,19 +69,19 @@ Both have clr-transformed species of interest attached.
 
 Ctrl and PD tested separately and together.
 
-met used for amino acids, crpbut used for crp and butyrate.
+met used for amino acids, crp used for crp
 
 ```{r Spearman}
 met2 = met %>% mutate(bristol_grp = ifelse(is.na(bristol),NA,ifelse(bristol<3,'Firm',ifelse(bristol<5,'Normal','Loose')))) %>% 
-  mutate_at(vars('pcresol','phenylacetylglutamine','Log2CRP','butyrate'),function(x)rescale(x))
+  mutate_at(vars('pcresol','phenylacetylglutamine','Log2CRP'),function(x)rescale(x))
 met2$bristol_grp = factor(met2$bristol_grp, levels=c('Loose','Normal','Firm'))
 
-met2 = met2 %>% pivot_longer(cols = c('pcresol','phenylacetylglutamine','Log2CRP','butyrate'),
-                             names_to = 'Variable', values_to = 'value')
+met2 = met2 %>% pivot_longer(cols = c('pcresol','phenylacetylglutamine','Log2CRP'),
+                             names_to = 'Variable', values_to = 'value') %>% 
+  filter(!is.na(value))
 
 met2[met2=='pcresol'] = 'p-Cresol'
 met2[met2=='phenylacetylglutamine'] = 'Phenylacetylglutamine'
-met2[met2=='butyrate'] = 'Butyrate Synth.\nCapacity'
 met2[met2=='Log2CRP'] = 'Log 2 CRP'
 
 table(met2$Status,met2$bristol_grp,met2$Variable)
@@ -108,20 +108,20 @@ spear %>%
   xlab('Stool Firmness') + ylab(NULL) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
 
-ggsave('../Final Outputs/Amino Acid Metabolites/Faecalibacterium_bristolgrp_spearman.png',height=3.5,width=6.5)
+ggsave('../Final Outputs/Amino Acid Metabolites/Faecalibacterium_bristolgrp_spearman_apr23.png',height=3,width=6.5)
 ```
 
 ```{r GLM}
 met2 = met %>% mutate(bristol_grp = ifelse(is.na(bristol),NA,ifelse(bristol<3,'Firm',ifelse(bristol<5,'Normal','Loose')))) %>% 
-  mutate_at(vars('pcresol','phenylacetylglutamine','Log2CRP','butyrate'),function(x)rescale(x))
+  mutate_at(vars('pcresol','phenylacetylglutamine','Log2CRP'),function(x)rescale(x))
 met2$bristol_grp = factor(met2$bristol_grp, levels=c('Loose','Normal','Firm'))
 
-met2 = met2 %>% pivot_longer(cols = c('pcresol','phenylacetylglutamine','Log2CRP','butyrate'),
-                             names_to = 'Variable', values_to = 'value')
+met2 = met2 %>% pivot_longer(cols = c('pcresol','phenylacetylglutamine','Log2CRP'),
+                             names_to = 'Variable', values_to = 'value') %>% 
+  filter(!is.na(value))
 
 met2[met2=='pcresol'] = 'p-Cresol'
 met2[met2=='phenylacetylglutamine'] = 'Phenylacetylglutamine'
-met2[met2=='butyrate'] = 'Butyrate Synth.\nCapacity'
 met2[met2=='Log2CRP'] = 'Log 2 CRP'
 
 table(met2$Status,met2$bristol_grp,met2$Variable)
@@ -148,10 +148,10 @@ glm %>%
   xlab('Stool Firmness') + ylab(NULL) +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
 
-ggsave('../Final Outputs/Amino Acid Metabolites/Faecalibacterium_bristolgrp_glm.png',height=3.5,width=6.5)
+ggsave('../Final Outputs/Amino Acid Metabolites/Faecalibacterium_bristolgrp_glm_apr23.png',height=3,width=6.5)
 ```
 
 ```{r Save Stats}
 writexl::write_xlsx(list(Spearman = spear,GLM = glm),
-                    '../Final Outputs/Amino Acid Metabolites/faecalibacterium_bristol_statistics.xlsx')
+                    '../Final Outputs/Amino Acid Metabolites/faecalibacterium_bristol_statistics_apr23.xlsx')
 ```
