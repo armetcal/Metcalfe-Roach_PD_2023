@@ -1,0 +1,130 @@
+---
+title: "4a. Key Species Per MetaCyc"
+author: "Avril Metcalfe-Roach"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(phyloseq)
+library(data.table)
+library(ggpubr)
+library(tidyverse)
+library(gt)
+
+# Phyloseq object of MetaCyc pathways
+ps = readRDS('../Reference Files/functional_phyloseq_metacyc_stratified.rds')
+```
+
+```{r Select pathways of interest}
+# Load significant pwys
+sig_multi = readxl::read_xlsx('../Results/Supplementary Data/Differential Abundance/MetaCyc_Summary.xlsx',sheet='multivar') %>% 
+  filter(Variable=='StatusPD',sig_in_at_least_n == T)
+
+# Direction of association
+sig_uni.coef = readxl::read_xlsx('../Results/Supplementary Data/Differential Abundance/MetaCyc_Stats.xlsx',sheet='univar') %>% 
+  filter(Species %in% sig_multi$Species) %>% select(Species,association_dir) %>% unique
+sig_multi.coef = readxl::read_xlsx('../Results/Supplementary Data/Differential Abundance/MetaCyc_Stats.xlsx',sheet='multivar') %>% 
+  filter(Variable == 'StatusPD', Species %in% sig_multi$Species) %>% 
+  select(Species,association_dir) %>% unique
+
+sig_coef = rbind(sig_uni.coef,sig_multi.coef) %>% unique %>% 
+  # Ensure that the directions don't change between models
+  group_by(Species) %>% add_tally() %>% ungroup()
+table(sig_coef$n) # All directions are conserved!
+
+# Identify OTUs that are >10% prevalent
+p = apply(ps@otu_table@.Data, 1, function(x) (sum(x != 0, na.rm = TRUE)/length(x[!is.na(x)]))>0.1)
+p2 = rownames(ps@tax_table@.Data)[p]
+
+# Normalized data for lfc calculations & stats analysis
+df2 = ps %>% microbiome::transform('clr')
+df2 = prune_taxa(p2,df2) %>% # prevalence
+  subset_taxa(feature %in% sig_multi$Species) %>% psmelt()
+df3 = ps %>% microbiome::transform('compositional') 
+df3 = prune_taxa(p2,df3) %>% # prevalence
+  subset_taxa(feature %in% sig_multi$Species) %>% psmelt()
+```
+
+```{r}
+test = df3 %>% filter(feature == df3$feature[1])
+```
+
+
+# Run Analysis
+
+```{r Run and format}
+# Univariate correlations
+uni = df2 %>% group_by(feature,taxon) %>% 
+  group_modify(~summary(glm(Abundance~Status, data = .))$coefficients %>% 
+                 as.matrix() %>% as.data.frame() %>% rownames_to_column('var')) %>% 
+  ungroup() %>% rename(pval = `Pr(>|t|)`) %>% 
+  filter(!str_detect(var,'Intercept')) %>% 
+  group_by(var) %>% 
+  mutate(qval = p.adjust(pval,method = 'fdr'), .after = pval) %>% 
+  ungroup() %>% 
+  mutate(Type = 'Univariate') %>% 
+  # Add association direction
+  left_join(sig_uni.coef %>% rename(feature=Species)) %>% 
+  mutate(same_direction = (Estimate<0) == (association_dir=='Negative'))
+
+# Multivariate correlations
+mult = df2 %>% group_by(feature,taxon) %>% 
+  group_modify(~summary(glm(Abundance~Status+Sex+laxatives+depth, data = .))$coefficients %>% 
+                 as.matrix() %>% as.data.frame() %>% rownames_to_column('var')) %>% 
+  ungroup() %>% rename(pval = `Pr(>|t|)`) %>% 
+  filter(!str_detect(var,'Intercept')) %>% 
+  group_by(var) %>%
+  mutate(qval = p.adjust(pval,method = 'fdr'), .after = pval) %>% 
+  ungroup() %>% 
+  mutate(Type = 'Multivariate') %>% 
+  # Add association direction
+  left_join(sig_uni.coef %>% rename(feature=Species)) %>% 
+  mutate(same_direction = (Estimate<0) == (association_dir=='Negative'))
+
+# Filter to include only q<0.05, and only disease status-related rows for multivar
+unisig = uni %>% filter(qval<0.05, same_direction==T)
+multisig = mult %>% filter(qval<0.05, same_direction==T, var=='StatusPD')
+
+# Filter to only include disease status hits that are significant in both uni and multivar results
+sig_filt = multisig %>% filter(paste0(feature,taxon) %in% paste0(unisig$feature,unisig$taxon)) %>% 
+  arrange(pval) %>% arrange(qval)
+```
+
+```{r}
+# Add multivar stats for all pathways that are univariately significant
+stats = rbind(unisig, 
+              mult %>% filter(var=='StatusPD',
+                              paste0(feature,taxon) %in% paste0(unisig$feature,unisig$taxon))) %>% 
+  rename(Pathway = feature,Species=taxon,Variable = var) %>% 
+  pivot_wider(values_from = c(Estimate:qval), names_from = Type) %>% 
+  mutate(Sig = (qval_Univariate<0.05 & qval_Multivariate < 0.05))
+
+# Fix names
+stats = stats %>% 
+  mutate(Pathway = str_replace(Pathway, '[&]beta;-D','B-D')) %>% 
+  mutate(Pathway = str_replace(Pathway, 'superpathway of ', 'superpathway of\n')) %>% 
+  mutate(Pathway = str_replace(Pathway, ' [(]', '\n[(]')) %>%
+  mutate(Species = str_replace(Species, 'NADH phosphorylation', 'NADH\nphosphorylation')) %>% 
+  mutate(Pathway = str_replace(Pathway, 'hex-4-', 'hex-4-\n'))
+# More formatting
+gt_tbl = stats %>% select(Pathway, everything()) %>%
+  mutate(Species = str_remove(Species,'.*[.]') %>% str_remove_all('s__') %>% 
+           str_replace_all('_',' ') %>% str_replace('uncl','Uncl')) %>% 
+  mutate_if(is.numeric,signif,3) %>% 
+  mutate_at(vars(contains('pval'),contains('qval')),scales::scientific,3) %>% 
+  arrange(qval_Univariate) %>% arrange(-Sig) %>% arrange(Species)
+# Even more formatting
+gt2 = gt_tbl %>% filter(is.na(Species)) %>%  # empty tibble, just colnames
+  rbind(matrix(data=c('Reduced in PD',rep('',ncol(gt_tbl)-1)),nrow=1, dimnames=list(NULL,names(gt_tbl)))) %>% 
+  rbind(gt_tbl %>% filter(association_dir=='Negative')) %>%
+  rbind(matrix(data=c('Elevated in PD',rep('',ncol(gt_tbl)-1)),nrow=1, dimnames=list(NULL,names(gt_tbl)))) %>% 
+  rbind(gt_tbl %>% filter(association_dir=='Positive')) %>% 
+  select(-association_dir,-Variable)
+```
+
+
+```{r Save raw statistics}
+writexl::write_xlsx(list(Univariate = uni, Multivariate = mult, Sig = gt2),
+                    '../Results/Supplementary Data/Differential Abundance/Stratified MetaCyc.xlsx')
+```

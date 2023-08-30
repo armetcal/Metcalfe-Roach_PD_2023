@@ -1,0 +1,91 @@
+---
+title: "4b. Microbes Important for DA Pathways"
+author: "Avril Metcalfe-Roach"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(readxl)
+
+# Load all the significant taxa-annotation correlations per dataset
+pwy = read_xlsx('../Results/Supplementary Data/Differential Abundance/Stratified MetaCyc.xlsx',sheet='Sig') %>% 
+  filter(Sig==T) %>% mutate(dataset = 'MetaCyc') %>% select(dataset, Pathway, Species)
+ko = read_xlsx('../Results/Supplementary Data/Differential Abundance/Stratified KO.xlsx',sheet='Sig') %>% 
+  filter(Sig==T) %>% mutate(dataset = 'KEGG') %>% select(dataset, KO, Species) %>% rename(Pathway=KO)
+cog = read_xlsx('../Results/Supplementary Data/Differential Abundance/Stratified COG.xlsx',sheet='Sig') %>% 
+  filter(Sig==T) %>% mutate(dataset = 'COG') %>% select(dataset, COG, Species) %>% rename(Pathway=COG)
+ec = read_xlsx('../Results/Supplementary Data/Differential Abundance/Stratified EC.xlsx',sheet='Sig') %>% 
+  filter(Sig==T) %>% mutate(dataset = 'EC') %>% select(dataset, EC, Species) %>% rename(Pathway=EC)
+
+# Combine results, remove unclassified reads
+df = rbind(pwy,ko,cog,ec) %>% unique %>% 
+  filter(Species !='Unclassified') %>% 
+  # For some reason the stratified dataset breaks R. intestinalis into generic and CAG 13, but they're combined in the unstratified dataset. R. intestinalis is already present here, so we'll just combine them too.
+  mutate(Species = ifelse(Species=='Roseburia intestinalis CAG 13','Roseburia intestinalis',Species)) %>% 
+  # count number of associations per dataset and total overall
+  group_by(dataset,Species) %>% count() %>% ungroup() %>% 
+  pivot_wider(names_from=dataset, values_from = n)
+df[is.na(df)] = 0
+df = df %>% mutate(Total = MetaCyc+KEGG+COG+EC)
+```
+
+# Proportion of sig hits
+```{r}
+# Load significant pwys
+sig_uni = readxl::read_xlsx('../Results/Supplementary Data/Differential Abundance/MetaCyc_Stats.xlsx',sheet='univar') %>% 
+  filter(q_val<0.05) %>% group_by(Species) %>% add_count() %>% filter(n>1) %>% 
+  select(Species,association_dir) %>% unique
+sig_multi = readxl::read_xlsx('../Results/Supplementary Data/Differential Abundance/MetaCyc_Stats.xlsx',sheet='multivar') %>%
+  filter(Variable=='StatusPD', Species %in% sig_uni$Species) %>% 
+  group_by(DA) %>% mutate(q_val = p.adjust(p_val,method='BH')) %>% ungroup %>% 
+  filter(q_val<0.05) %>% group_by(Species) %>% add_count() %>% filter(n>1) %>% 
+  select(Species,association_dir) %>% unique
+
+# Load significant pwys
+sig_uni2 = readxl::read_xlsx('../Results/Supplementary Data/Differential Abundance/COG Enzymes_Stats.xlsx',sheet='univar') %>% 
+  filter(q_val<0.05) %>% group_by(Species) %>% add_count() %>% filter(n>1) %>% 
+  select(Species,association_dir) %>% unique
+sig_multi2 = readxl::read_xlsx('../Results/Supplementary Data/Differential Abundance/COG Enzymes_Stats.xlsx',sheet='multivar') %>%
+  filter(Variable=='StatusPD', Species %in% sig_uni2$Species) %>% 
+  group_by(DA) %>% mutate(q_val = p.adjust(p_val,method='BH')) %>% ungroup %>% 
+  filter(q_val<0.05) %>% group_by(Species) %>% add_count() %>% filter(n>1) %>% 
+  select(Species,association_dir) %>% unique
+
+# Load significant pwys
+sig_uni3 = readxl::read_xlsx('../Results/Supplementary Data/Differential Abundance/KO_Stats.xlsx',sheet='univar') %>% 
+  filter(q_val<0.05) %>% group_by(Species) %>% add_count() %>% filter(n>1) %>% 
+  select(Species,association_dir) %>% unique
+sig_multi3 = readxl::read_xlsx('../Results/Supplementary Data/Differential Abundance/KO_Stats.xlsx',sheet='multivar') %>%
+  filter(Variable=='StatusPD', Species %in% sig_uni3$Species) %>% 
+  group_by(DA) %>% mutate(q_val = p.adjust(p_val,method='BH')) %>% ungroup %>% 
+  filter(q_val<0.05) %>% group_by(Species) %>% add_count() %>% filter(n>1) %>% 
+  select(Species,association_dir) %>% unique
+
+# Load significant pwys
+sig_uni4 = readxl::read_xlsx('../Results/Supplementary Data/Differential Abundance/EC_Stats.xlsx',sheet='univar') %>% 
+  filter(q_val<0.05) %>% group_by(Species) %>% add_count() %>% filter(n>1) %>% 
+  select(Species,association_dir) %>% unique
+sig_multi4 = readxl::read_xlsx('../Results/Supplementary Data/Differential Abundance/EC_Stats.xlsx',sheet='multivar') %>%
+  filter(Variable=='StatusPD', Species %in% sig_uni4$Species) %>% 
+  group_by(DA) %>% mutate(q_val = p.adjust(p_val,method='BH')) %>% ungroup %>% 
+  filter(q_val<0.05) %>% group_by(Species) %>% add_count() %>% filter(n>1) %>% 
+  select(Species,association_dir) %>% unique
+
+allsig = tibble(Species = 'Total Sig Per Dataset',COG=nrow(sig_multi2),
+                EC=nrow(sig_multi4),KEGG=nrow(sig_multi3),MetaCyc=nrow(sig_multi)) %>% 
+  mutate(Total = MetaCyc+KEGG+COG+EC)
+
+df = rbind(allsig,df)
+df = df %>% mutate('COG (%)' = (100*COG/allsig$COG[1]),
+                   'EC (%)' = (100*EC/allsig$EC[1]),
+                   'KEGG (%)' = (100*KEGG/allsig$KEGG[1]),
+                   'MetaCyc (%)' = (100*MetaCyc/allsig$MetaCyc[1]),
+                   'Total (%)' = (100*Total/allsig$Total[1])) %>% 
+  mutate_at(vars(contains('%')),function(x) round(x,1))
+df[df==100] = NA # The normalized total hits, meaningless
+
+writexl::write_xlsx(df,'../Results/Table 1 - Stratified Hits.xlsx')
+```
+

@@ -1,0 +1,163 @@
+---
+title: "0. Patient Numbers for STORMS Chart"
+author: "Avril Metcalfe-Roach"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(phyloseq)
+library(tidyverse)
+```
+
+# 1. Dataset A: Default Dataset
+
+```{r}
+# This contains all the taxonomic and sample data necessary for cross-sectional analyses.
+ps = readRDS('../Reference Files/phyloseq_object_all_samples.rds')
+nsamples(ps)
+nsamples(ps %>% subset_samples(Status=='PD'))
+nsamples(ps %>% subset_samples(Status=='Ctrl'))
+
+# Filter out entacapone users
+ps = ps %>% subset_samples(entacapone==0)
+nsamples(ps %>% subset_samples(Status=='PD'))
+nsamples(ps %>% subset_samples(Status=='Ctrl'))
+
+# Laxative data available
+ps = ps %>% subset_samples(!is.na(laxatives))
+nsamples(ps %>% subset_samples(Status=='PD'))
+nsamples(ps %>% subset_samples(Status=='Ctrl'))
+
+# saveRDS(ps,'../Reference Files/taxonomy_phyloseq.rds')
+dataset_a = readRDS('../Reference Files/taxonomy_phyloseq.rds')
+```
+
+# 2. Dataset A: Split into Training and Testing for Random Forest
+
+```{r}
+# Filter out NAs from other RF variables
+risk = read.csv('../Reference Files/Misc PD Risk.csv') %>% filter(!is.na(smokeprev_or_before_pd),!is.na(coffee_per_day))
+ps = dataset_a %>% subset_samples(!is.na(bristol))
+ps = prune_samples(risk$Sample,ps)
+nsamples(ps)
+
+# Binning from Random Forest
+# Note: binning was done during the RF analysis. Bins were saved and loaded below.
+# Training
+train_set = readxl::read_xlsx('../Reference Files/RF Training Samples.xlsx')
+nsamples(prune_samples(train_set$Sample,ps) %>% subset_samples(Status=="PD"))
+nsamples(prune_samples(train_set$Sample,ps) %>% subset_samples(Status=="Ctrl"))
+# Testing
+test_set = sample_names(ps)[!(sample_names(ps) %in% train_set$Sample)]
+nsamples(prune_samples(test_set,ps) %>% subset_samples(Status=="PD"))
+nsamples(prune_samples(test_set,ps) %>% subset_samples(Status=="Ctrl"))
+```
+
+# 3. Longitudinal Analysis
+
+```{r Complete MDS-UPDRS 1,2,4}
+ps = dataset_a %>% subset_samples(Status=='PD')
+nsamples(ps)
+
+# Load longitudinal data - only contains people with 2+ visits, and who have no missing 
+long = read.csv('../Reference Files/longitudinal_data.csv') %>% 
+  select(Sample, redcap_event_name, 
+         contains('mds1.total'),contains('mds2.total'),
+         contains('mds3.total'),contains('mds4.total'),
+         contains('mds.total')) %>% unique
+temp = ps %>% psmelt() %>% 
+  select(Sample,Status) %>% unique %>% 
+  left_join(long)
+table(temp$redcap_event_name,(!is.na(temp$mds1.total)& !is.na(temp$mds2.total)& !is.na(temp$mds4.total)))
+```
+
+```{r Complete MDS-UPDRS 1,2,3,4}
+ps = dataset_a %>% subset_samples(Status=='PD')
+nsamples(ps)
+
+# Load longitudinal data - only contains people with 2+ visits, and who have no missing 
+long = read.csv('../Reference Files/longitudinal_data.csv') %>% 
+  select(Sample, redcap_event_name, 
+         contains('mds1.total'),contains('mds2.total'),
+         contains('mds3.total'),contains('mds4.total'),
+         contains('mds.total')) %>% unique
+temp = ps %>% psmelt() %>% 
+  select(Sample,Status) %>% unique %>% 
+  left_join(long)
+table(temp$redcap_event_name,(!is.na(temp$mds1.total)& !is.na(temp$mds2.total)& 
+                                !is.na(temp$mds3.total)& !is.na(temp$mds4.total)))
+```
+
+# 4. Metabolites
+
+```{r}
+# Significant microbially-derived metabolites from previous paper (serum metabolomics)
+# p-cresol and phenylacetylglutamine
+met = read.csv('../Reference Files/normalized_proteolytic_metabolites.csv')
+nrow(met)
+
+temp = dataset_a %>% psmelt() %>% 
+  select(Sample,Status,bristol) %>% unique
+
+# In Dataset A
+met = met %>% left_join(temp) %>% filter(!is.na(Status))
+table(met$Status)
+
+# Divided by Bristol
+table(met$Status,met$bristol<3) # Firm
+table(met$Status,met$bristol>=3&met$bristol<=4) # Normal
+table(met$Status,met$bristol>4) # Loose
+```
+
+# 5. Serum CRP
+
+```{r}
+# Serum CRP data (ELISA)
+met = read.csv('../Reference Files/serum_crp.csv')
+nrow(met)
+
+temp = dataset_a %>% psmelt() %>% 
+  select(Sample,Status,bristol) %>% unique
+
+# In dataset A
+met = met %>% left_join(temp)
+table(met$Status)
+```
+
+# 6. Longitudinal Data: Split into Training and Testing Datasets for Random Forest
+
+```{r}
+ps = dataset_a %>% subset_samples(Status=='PD')
+nsamples(ps)
+
+# Load longitudinal data - only contains people with 2+ visits, and who have no missing 
+long = read.csv('../Reference Files/longitudinal_data.csv') %>% 
+  select(Sample, redcap_event_name,
+         contains('mds.total')) %>% unique %>% 
+  filter(!is.na(mds.total)) %>% 
+  group_by(Sample) %>% add_count() %>% ungroup() %>% filter(n>1)
+temp = ps %>% psmelt() %>% 
+  select(Sample,Status,bristol) %>% unique %>% 
+  left_join(long) %>% 
+  filter((!is.na(mds.total)))
+
+# Filter out NAs from other RF variables
+risk = read.csv('../Reference Files/Misc PD Risk.csv') %>% filter(!is.na(smokeprev_or_before_pd),!is.na(coffee_per_day))
+temp = temp %>% filter(!is.na(bristol)) %>% 
+  filter(Sample %in% risk$Sample)
+length(unique(temp$Sample))
+
+# Binning from Random Forest
+# Note: binning was done during the RF analysis. Bins were saved and loaded below.
+# Training
+train_set = readxl::read_xlsx('../Reference Files/RF Training Samples - Prog.xlsx')
+nrow(temp %>% filter(Sample %in% train_set$Sample, Status=='PD'))
+nsamples(prune_samples(train_set$Sample,ps) %>% subset_samples(Status=="PD"))
+nsamples(prune_samples(train_set$Sample,ps) %>% subset_samples(Status=="Ctrl"))
+# Testing
+test_set = sample_names(ps)[!(sample_names(ps) %in% train_set$Sample)]
+nsamples(prune_samples(test_set,ps) %>% subset_samples(Status=="PD"))
+nsamples(prune_samples(test_set,ps) %>% subset_samples(Status=="Ctrl"))
+```
+

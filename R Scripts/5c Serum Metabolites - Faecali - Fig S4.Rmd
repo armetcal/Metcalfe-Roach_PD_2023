@@ -1,0 +1,140 @@
+---
+title: "5a.2 Serum Metabolites - Faecali - Fig S4"
+author: "Avril Metcalfe-Roach"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r Load data}
+library(phyloseq)
+library(tidyverse)
+library(ggpubr)
+library(microbiome)
+library(ggcorrplot)
+library(scales)
+
+# Taxonomy Data - CLR transformed
+ps = readRDS("../Reference Files/taxonomy_phyloseq.rds") %>% microbiome::transform('clr')
+
+# Serum CRP data (ELISA)
+crp = read.csv('../Reference Files/serum_crp.csv')
+# Significant microbially-derived metabolites from previous paper (serum metabolomics)
+# p-cresol and phenylacetylglutamine
+met = read.csv('../Reference Files/normalized_proteolytic_metabolites.csv')
+```
+
+```{r Prep dataset}
+# Select 's__Faecalibacterium_prausnitzii', melt phyloseq
+other_levels = colnames(ps@tax_table)[colnames(ps@tax_table) != 'Species']
+psm = ps %>% subset_taxa(Species == 's__Faecalibacterium_prausnitzii') %>% psmelt() %>%
+  select(Species,everything()) %>% 
+  select(-any_of(other_levels),-OTU) %>%
+  pivot_wider(names_from = Species, values_from = Abundance)
+
+# Combine datasets
+psm = psm %>% left_join(crp) %>% left_join(met)
+
+# Add bristol groups - loose, med, firm
+psm = psm %>% mutate(bristol_grp = ifelse(is.na(bristol),NA,
+                                          ifelse(bristol<3,'Firm',
+                                                 ifelse(bristol<5,'Normal','Loose')))) %>% 
+  # All numerical variables must be scaled so that their GLM estimates are comparable.
+  mutate_at(vars('pcresol','phenylacetylglutamine','Log2CRP'),function(x)rescale(x))
+psm$bristol_grp = factor(psm$bristol_grp, levels=c('Loose','Normal','Firm'))
+
+# Format to make it look nicer
+psm = psm %>% pivot_longer(cols = c('pcresol','phenylacetylglutamine'),#,'Log2CRP'),
+                             names_to = 'Variable', values_to = 'value') %>% 
+  filter(!is.na(value))
+
+psm[psm=='pcresol'] = 'p-Cresol'
+psm[psm=='phenylacetylglutamine'] = 'Phenylacetylglutamine'
+psm[psm=='Log2CRP'] = 'Log 2 CRP'
+
+# Clean up a little
+rm(crp, met)
+```
+
+# Fig S2a - Univariate Analysis
+
+```{r With Laxative}
+n.lax = psm %>% filter(!is.na(bristol)) %>% 
+  group_by(Variable,bristol_grp,Status) %>% count() %>% 
+  arrange(bristol_grp) %>% arrange(Variable) %>% arrange(Status) %>% 
+  # Mark groups with n<5 for removal from plot
+  mutate(to_remove = (n<5)) %>% 
+  mutate(Group = paste(Variable,Status,bristol_grp))
+to_remove = n.lax$Group[n.lax$to_remove==T]
+
+spear.lax = psm %>% filter(!is.na(bristol)) %>% 
+  mutate(Group = paste(Variable,Status,bristol_grp)) %>% 
+  group_by(Group,Variable,bristol_grp,Status) %>% 
+  group_modify(~cor.test(~value+s__Faecalibacterium_prausnitzii,data=.,method='spearman') %>%
+                 .[c('estimate','p.value')] %>% as.data.frame()) %>%
+  rename(Rho = estimate) %>% 
+  mutate(pval = ifelse(p.value>0.05,'',
+                      ifelse(p.value>0.01,'*',
+                             ifelse(p.value>0.001,'**',
+                                    ifelse(p.value<=0.001,'***',''))))) %>% 
+  mutate(pval2 = ifelse(p.value>0.1,'',
+                       ifelse(p.value>0.05,'+',''))) %>% 
+  mutate(Rho = ifelse(Group %in% to_remove,NA,Rho)) 
+
+spear.lax %>% 
+  ggplot(aes(bristol_grp,Variable,col=Rho)) +
+  geom_point(size=14) +
+  theme_classic(base_size=16) +
+  geom_text(aes(label=pval),size = 10, col = 'white',nudge_y = -0.2) +
+  geom_text(aes(label=pval2),size = 10, col = 'white',nudge_y = 0) +
+  scale_color_gradient2(low="darkblue", high="darkred", guide="colorbar") +
+  facet_wrap('Status') +
+  xlab('Stool Firmness') + ylab(NULL) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+ggsave('../Results/Supplementary Figures/Fig. S2a - Faecalibacterium vs Metabolites - Univar.png',height=2.5,width=6.5)
+```
+
+# Fig S2b - Multivariate Analysis
+
+```{r GLM With Laxatives}
+n.lax.m = psm %>% filter(!is.na(bristol)) %>% 
+  group_by(Variable,bristol_grp,Status) %>% count() %>% 
+  arrange(bristol_grp) %>% arrange(Variable) %>% arrange(Status) %>% 
+  # Mark groups with n<5 for removal from plot
+  mutate(to_remove = (n<5)) %>% 
+  mutate(Group = paste(Variable,Status,bristol_grp))
+to_remove = n.lax.m$Group[n.lax.m$to_remove==T]
+
+glm.lax.m = psm %>% filter(!is.na(bristol)) %>% 
+  mutate(Group = paste(Variable,Status,bristol_grp)) %>% 
+  group_by(Group,Variable,bristol_grp,Status) %>%
+  group_modify(~summary(glm(value~s__Faecalibacterium_prausnitzii+laxatives+depth+Sex,data=.))$coefficients %>%
+                 as.data.frame() %>% rownames_to_column('temp')) %>%
+  filter(temp=='s__Faecalibacterium_prausnitzii') %>% 
+  mutate(pval = ifelse(`Pr(>|t|)`>0.05,'',
+                      ifelse(`Pr(>|t|)`>0.01,'*',
+                             ifelse(`Pr(>|t|)`>0.001,'**',
+                                    ifelse(`Pr(>|t|)`<=0.001,'***',''))))) %>% 
+  mutate(pval2 = ifelse(`Pr(>|t|)`>0.1,'',
+                       ifelse(`Pr(>|t|)`>0.05,'+',''))) %>% 
+  mutate(Estimate = ifelse(Group %in% to_remove,NA,Estimate)) 
+
+glm.lax.m %>% 
+  ggplot(aes(bristol_grp,Variable,col=Estimate)) +
+  geom_point(size=14) +
+  theme_classic(base_size=16) +
+  geom_text(aes(label=pval),size = 10, col = 'white',nudge_y = -0.2) +
+  geom_text(aes(label=pval2),size = 10, col = 'white',nudge_y = 0) +
+  scale_color_gradient2(low="darkblue", high="darkred", guide="colorbar") +
+  facet_wrap('Status') +
+  xlab('Stool Firmness') + ylab(NULL) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+ggsave('../Results/Supplementary Figures/Fig. S2a - Faecalibacterium vs Metabolites - With Lax - Multivar.png',height=2.5,width=6.5)
+```
+
+```{r Save Stats}
+writexl::write_xlsx(list('Univar' = spear.lax,
+                         'Multivar' = glm.lax.m),
+                    '../Results/Supplementary Data/Metabolite Associations/Faecali vs Metabolites - Bristol Stratified.xlsx')
+```
