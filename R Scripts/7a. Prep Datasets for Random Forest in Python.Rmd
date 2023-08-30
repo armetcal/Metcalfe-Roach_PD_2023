@@ -1,5 +1,5 @@
 ---
-title: "7a. Prep Datasets for Ranodm Forest in Python"
+title: "7a. Prep Datasets for Random Forest in Python"
 author: "Avril Metcalfe-Roach"
 date: "`r Sys.Date()`"
 output: html_document
@@ -212,8 +212,9 @@ df5 = df5 %>% arrange(match(Sample, order))
 df6 = df6 %>% arrange(match(Sample, order))
 ```
 
-```{r}
 # Save datasets
+
+```{r Status}
 write.csv(df %>% filter(!is.na(bristol),!is.na(smokeprev_or_before_pd), !is.na(logcoffeeperday)),
           '../Reference Files/FOR RF - Status - Taxonomy.csv',row.names=F)
 write.csv(df2 %>% filter(!is.na(bristol),!is.na(smokeprev_or_before_pd), !is.na(logcoffeeperday)),  
@@ -229,5 +230,22 @@ write.csv(df6 %>% filter(!is.na(bristol),!is.na(smokeprev_or_before_pd), !is.na(
 write.csv(df6 %>% filter(!is.na(bristol),!is.na(smokeprev_or_before_pd), !is.na(logcoffeeperday)) %>%  
             select(-contains('Unknown_')),
           '../Reference Files/FOR RF - Status - Metabolites - Annotated Only.csv',row.names=F)
+```
+
+```{r Progression}
+write.csv(long_all %>% filter(!is.na(bristol),!is.na(logcoffeeperday)) %>% select(-smokeprev_or_before_pd),
+          '../Reference Files/FOR RF - Progression - Taxonomy.csv',row.names=F)
+write.csv(long_all2 %>% filter(!is.na(bristol),!is.na(logcoffeeperday)) %>% select(-smokeprev_or_before_pd), 
+          '../Reference Files/FOR RF - Progression - MetaCyc.csv',row.names=F)
+write.csv(long_all3 %>% filter(!is.na(bristol),!is.na(logcoffeeperday)) %>% select(-smokeprev_or_before_pd),
+          '../Reference Files/FOR RF - Progression - KO.csv',row.names=F)
+write.csv(long_all4 %>% filter(!is.na(bristol),!is.na(logcoffeeperday)) %>% select(-smokeprev_or_before_pd), 
+          '../Reference Files/FOR RF - Progression - COG.csv',row.names=F)
+write.csv(long_all5 %>% filter(!is.na(bristol),!is.na(logcoffeeperday)) %>% select(-smokeprev_or_before_pd), 
+          '../Reference Files/FOR RF - Progression - EC.csv',row.names=F)s
+write.csv(long_all6 %>% filter(!is.na(bristol),!is.na(logcoffeeperday)) %>% select(-smokeprev_or_before_pd), 
+          '../Reference Files/FOR RF - Progression - Metabolites.csv',row.names=F)
+write.csv(long_all6 %>% filter(!is.na(bristol),!is.na(logcoffeeperday)) %>% select(-smokeprev_or_before_pd) %>% select(-contains('Unknown_')),
+          '../Reference Files/FOR RF - Progression - Metabolites - Annotated Only.csv',row.names=F)
 ```
 
