@@ -278,6 +278,28 @@ p5 = imp3 %>% filter(Data=='COG & Covar') %>%
 ggarrange(p4,p5, nrow=2)
 
 ggsave('../Results/Supplementary Figures/Importance Scores - Status - COG.jpeg',height=6, width=11)
+
+# Metabolites
+p4 = imp3 %>% filter(Data=='Metabolites') %>% 
+  mutate(Feature=factor(Feature,levels=.$Feature)) %>% 
+    ggplot(aes(y = Importance, x = Feature, fill=`PD vs Ctrl`)) + geom_col() +
+    scale_fill_manual(values = hex) +
+    theme_classic(base_size=16) +
+    theme(legend.position = 'none')  +  
+  scale_y_continuous(expand = expansion(mult = c(0,0.15))) +xlab(NULL) + ylab('Importance') +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p5 = imp3 %>% filter(Data=='Metabolites & Covar') %>%
+  mutate(Feature=factor(Feature,levels=.$Feature)) %>% 
+    ggplot(aes(y = Importance, x = Feature, fill=`PD vs Ctrl`)) + geom_col() +
+    scale_fill_manual(values = hex) +
+    theme_classic(base_size=16) +
+    theme(legend.position = 'none')  +  
+  scale_y_continuous(expand = expansion(mult = c(0,0.15))) +xlab(NULL) + ylab('Importance') +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggarrange(p4,p5, nrow=2)
+
+ggsave('../Results/Supplementary Figures/Importance Scores - Status - Metabolites.jpeg',height=8, width=11)
 ```
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
